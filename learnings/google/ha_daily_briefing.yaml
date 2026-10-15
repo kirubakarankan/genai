@@ -1,0 +1,125 @@
+alias: Evening Home Briefing
+description: Daily home and grid electricity briefing
+triggers:
+  - trigger: time
+    at: '20:30:00'
+conditions: []
+actions:
+  - action: ai_task.generate_data
+    continue_on_error: true
+    data:
+      entity_id: ai_task.google_ai_task
+      task_name: Home summary
+      instructions: >-
+        You are my personal smart home assistant. Write a friendly evening
+        briefing of at most 100 words using only the values below. Send a useful
+        status update every day, even when nothing needs attention. Prioritize
+        Tesla charging readiness, laundry waiting to be unloaded, AdGuard
+        protection, and grid electricity. Do not execute commands or invent
+        facts. Ignore unknown or unavailable values.
+
+
+        TESLA:
+
+        Battery: {{ states('sensor.blacky_battery_level') }}%
+
+        Charging cable: {{ states('binary_sensor.blacky_charge_cable') }}
+
+        Charge limit: {{ states('number.blacky_charge_limit') }}%
+
+        Preferred departure battery: {{
+        states('input_number.tesla_departure_minimum') }}%
+
+
+        LAUNDRY:
+
+        Washing machine: {{
+        states('sensor.laundry_room_laundry_room_washer_machine_state') }}
+
+        Dryer: {{ states('sensor.laundry_room_kaayavekradhu_machine_state') }}
+
+        Laundry waiting: {{ states('input_boolean.laundry_needs_unloading') }}
+
+
+        NETWORK:
+
+        AdGuard protection: {{ states('switch.adguard_home_protection') }}
+
+
+        GRID ELECTRICITY, ROLLING LAST 24 HOURS:
+
+        {% set grid_import =
+        states('sensor.ground_floor_p1_meter_p1_grid_import_last_24_hours') %}
+
+        {% set import_coverage =
+        state_attr('sensor.ground_floor_p1_meter_p1_grid_import_last_24_hours',
+        'age_coverage_ratio') | float(0) %}
+
+        {% set grid_export =
+        states('sensor.ground_floor_p1_meter_p1_grid_export_last_24_hours') %}
+
+        {% set export_coverage =
+        state_attr('sensor.ground_floor_p1_meter_p1_grid_export_last_24_hours',
+        'age_coverage_ratio') | float(0) %}
+
+        {% if is_number(grid_import) and import_coverage >= 0.98 %}Imported from
+        grid: {{ grid_import }} kWh{% else %}Reliable 24-hour grid import is not
+        available yet{% endif %}
+
+        {% if is_number(grid_export) and export_coverage >= 0.98 %}Exported to
+        grid: {{ grid_export }} kWh{% else %}Reliable 24-hour grid export is not
+        available yet{% endif %}
+
+        Current net grid power: {{ states('sensor.p1_meter_power') }} W
+
+
+        ENTERTAINMENT:
+
+        Living room TV: {{ states('media_player.vk_tv') }}
+
+
+        INTERPRETATION:
+
+        These P1 values are grid import and export, not total household
+        consumption when solar generation is present. Positive current grid
+        power means importing; negative means exporting. A charging cable
+        connected does not prove the Tesla is charging. Washer or dryer state
+        "stop" does not prove a successful completed cycle. Laundry waiting
+        "off" means no pending unloading is recorded. AdGuard "unavailable"
+        means its state cannot be retrieved. TV "off" only means the TV is off.
+        Do not predict Tesla charging completion without charging-rate data.
+        Mention missing information only if it affects a useful conclusion.
+    response_variable: briefing
+  - variables:
+      briefing_text: >-
+        {% if briefing is defined and briefing is mapping and
+        briefing.get('data') %}
+          {{ briefing['data'] }}
+        {% else %}
+          Daily home status: AI summary unavailable.
+          {% set imported = states('sensor.ground_floor_p1_meter_p1_grid_import_last_24_hours') %}
+          {% set exported = states('sensor.ground_floor_p1_meter_p1_grid_export_last_24_hours') %}
+          {% set import_coverage = state_attr('sensor.ground_floor_p1_meter_p1_grid_import_last_24_hours', 'age_coverage_ratio') | float(0) %}
+          {% set export_coverage = state_attr('sensor.ground_floor_p1_meter_p1_grid_export_last_24_hours', 'age_coverage_ratio') | float(0) %}
+          {% if is_number(imported) and import_coverage >= 0.98 %}Grid electricity imported in the last 24 hours: {{ imported }} kWh.{% else %}A reliable 24-hour grid import figure is not available yet.{% endif %}
+          {% if is_number(exported) and export_coverage >= 0.98 %}Grid electricity exported in the last 24 hours: {{ exported }} kWh.{% else %}A reliable 24-hour grid export figure is not available yet.{% endif %}
+          {% set battery = states('sensor.blacky_battery_level') %}
+          {% set minimum = states('input_number.tesla_departure_minimum') %}
+          {% if is_number(battery) and is_number(minimum) and (battery | float) < (minimum | float) and is_state('binary_sensor.blacky_charge_cable', 'off') %}Tesla battery is {{ battery }}%, below the {{ minimum }}% departure target, and the charging cable is unplugged.{% endif %}
+          {% if is_state('input_boolean.laundry_needs_unloading', 'on') %}Laundry needs unloading.{% endif %}
+          {% if is_state('switch.adguard_home_protection', 'off') %}AdGuard protection is off.{% endif %}
+          {% set grid_power = states('sensor.p1_meter_power') %}
+          {% if is_number(grid_power) %}Current net grid power: {{ grid_power }} W.{% endif %}
+        {% endif %}
+  - action: persistent_notification.create
+    data:
+      title: 🏠 Home Intelligence - Evening Briefing
+      message: '{{ briefing_text }}'
+      notification_id: evening_home_briefing
+  - action: notify.send_message
+    target:
+      entity_id: notify.kirus_iphone
+    data:
+      title: 🏠 Home Intelligence
+      message: '{{ briefing_text }}'
+mode: restart
